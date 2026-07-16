@@ -551,14 +551,14 @@ app.post("/api/verses", async (req, res) => {
 // Bookmarks
 app.get("/api/bookmarks", async (req, res) => {
   try {
-    const { data: bookmarks, error } = await supabase.from("bookmarks").select("*");
+    const { data: bookmarks, error } = await supabase.from("bookmarks").select("*, verse:verses(*)");
     if (error) throw error;
     if (bookmarks) {
       const mapped = bookmarks.map((b: any) => ({
         id: b.id,
         verseId: b.verse_id,
         bookmarkedAt: b.bookmarked_at,
-        verse: db.verses.find(v => v.id === b.verse_id)
+        verse: b.verse
       }));
       db.bookmarks = mapped;
       saveDb();
@@ -632,7 +632,7 @@ app.post("/api/bookmarks", async (req, res) => {
 app.get("/api/devotions", async (req, res) => {
   const { audience, theme, status } = req.query;
   try {
-    let query = supabase.from("devotions").select("*");
+    let query = supabase.from("devotions").select("*, verse:verses(*)");
     if (audience) query = query.eq("audience", audience);
     if (theme) query = query.eq("theme", theme);
     if (status) query = query.eq("status", status);
@@ -640,11 +640,7 @@ app.get("/api/devotions", async (req, res) => {
     const { data: devotions, error } = await query;
     if (error) throw error;
     if (devotions) {
-      const mappedDevotions = devotions.map((d: any) => ({
-        ...d,
-        verse: db.verses.find(v => v.id === d.verse_id)
-      }));
-      return res.json(mappedDevotions);
+      return res.json(devotions);
     }
   } catch (err) {
     console.warn("Supabase fetch devotions failed, using local cache:", err);
@@ -672,15 +668,12 @@ app.get("/api/devotions/:idOrSlug", async (req, res) => {
   try {
     const { data: dev, error } = await supabase
       .from("devotions")
-      .select("*")
+      .select("*, verse:verses(*)")
       .or(`id.eq.${param},slug.eq.${param}`)
       .maybeSingle();
 
     if (dev) {
-      return res.json({
-        ...dev,
-        verse: db.verses.find(v => v.id === dev.verse_id)
-      });
+      return res.json(dev);
     }
   } catch (err) {
     console.warn("Supabase devotion lookup failed, using local cache:", err);
