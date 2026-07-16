@@ -1,9 +1,54 @@
 <!doctype html>
-<html lang="en">
+<html lang="id">
   <head>
+    <script>
+      // Fix for iframe environments where window.fetch is a read-only getter and crashes on polyfill/setup attempts
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var customFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() { return customFetch; },
+            set: function(val) { customFetch = val; },
+            configurable: true,
+            enumerable: true
+          });
+          if (typeof global === 'undefined') {
+            window.global = window;
+          }
+        } catch (e) {
+          console.warn('Could not polyfill window.fetch setter:', e);
+        }
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    
+    <!-- Primary Meta Tags -->
+    <title>Firman Hidup - Renungan Kristen Harian & Pelayanan Digital Berbasis AI</title>
+    <meta name="title" content="Firman Hidup - Renungan Kristen Harian & Pelayanan Digital Berbasis AI" />
+    <meta name="description" content="Temukan pertumbuhan rohani setiap hari melalui Renungan Kristen Harian Firman Hidup. Dilengkapi dengan Alkitab digital, Rencana Bacaan Alkitab harian, fitur Bookmarks, Toko Merchandise, dan Generator Renungan Berbasis Kecerdasan Buatan (AI) terintegrasi." />
+    <meta name="keywords" content="renungan harian, renungan kristen, saat teduh harian, saat teduh pemuda, alkitab online, ayat alkitab, firman hidup, renungan remaja, renungan anak, kristen protestan, katolik, rencana bacaan alkitab, renungan bertenaga AI" />
+    <meta name="author" content="Firman Hidup Ministry" />
+    <meta name="robots" content="index, follow" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://omubicoajncplzzdbjri.supabase.co" />
+    <meta property="og:title" content="Firman Hidup - Renungan Kristen Harian & Pelayanan Digital" />
+    <meta property="og:description" content="Temukan pertumbuhan rohani setiap hari melalui renungan harian terpersonalisasi, Alkitab digital, rencana bacaan harian, dan generator renungan bertenaga AI." />
+    <meta property="og:image" content="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&h=630&q=80" />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://omubicoajncplzzdbjri.supabase.co" />
+    <meta property="twitter:title" content="Firman Hidup - Renungan Kristen Harian & Pelayanan Digital" />
+    <meta property="twitter:description" content="Temukan pertumbuhan rohani setiap hari melalui renungan harian terpersonalisasi, Alkitab digital, rencana bacaan harian, dan generator renungan bertenaga AI." />
+    <meta property="twitter:image" content="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1200&h=630&q=80" />
+
+    <!-- Favicon and Theme Color -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔥</text></svg>" />
+    <meta name="theme-color" content="#4f46e5" />
   </head>
   <body>
     <div id="root"></div>

@@ -9,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
@@ -315,6 +316,76 @@ const initialDb = {
 // Database state
 let db = { ...initialDb };
 
+// Initialize Supabase client
+const supabaseUrl = process.env.VITE_SUPABASE_URL || "https://omubicoajncplzzdbjri.supabase.co";
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_7_n8wUOQfpzHAy9cKe5roQ_qfLAlyVn";
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Synchronize memory cache from Supabase database
+async function syncFromSupabase() {
+  try {
+    console.log("Synchronizing database cache from Supabase...");
+    
+    // 1. Themes
+    const { data: themes, error: themesErr } = await supabase.from("themes").select("*");
+    if (!themesErr && themes && themes.length > 0) {
+      db.themes = themes;
+    }
+    
+    // 2. Verses
+    const { data: verses, error: versesErr } = await supabase.from("verses").select("*");
+    if (!versesErr && verses && verses.length > 0) {
+      db.verses = verses;
+    }
+    
+    // 3. Devotions
+    const { data: devotions, error: devotionsErr } = await supabase.from("devotions").select("*");
+    if (!devotionsErr && devotions && devotions.length > 0) {
+      db.devotions = devotions;
+    }
+    
+    // 4. Merchandise
+    const { data: merch, error: merchErr } = await supabase.from("merchandise").select("*");
+    if (!merchErr && merch && merch.length > 0) {
+      db.merchandise = merch;
+    }
+    
+    // 5. Reading Plans
+    const { data: plans, error: plansErr } = await supabase.from("reading_plans").select("*");
+    if (!plansErr && plans && plans.length > 0) {
+      db.readingPlan = plans.sort((a, b) => a.day - b.day);
+    }
+    
+    // 6. Donations
+    const { data: donations, error: donErr } = await supabase.from("donations").select("*");
+    if (!donErr && donations && donations.length > 0) {
+      db.donations = donations;
+    }
+
+    // 7. Users
+    const { data: users, error: usersErr } = await supabase.from("users").select("*");
+    if (!usersErr && users && users.length > 0) {
+      db.users = users;
+    }
+
+    // 8. Bookmarks
+    const { data: bookmarks, error: bmErr } = await supabase.from("bookmarks").select("*");
+    if (!bmErr && bookmarks) {
+      db.bookmarks = bookmarks.map((b: any) => ({
+        id: b.id,
+        verseId: b.verse_id,
+        bookmarkedAt: b.bookmarked_at,
+        verse: db.verses.find(v => v.id === b.verse_id)
+      }));
+    }
+
+    saveDb();
+    console.log("Cache successfully synced with Supabase.");
+  } catch (err) {
+    console.error("Supabase sync failed (using local db.json cache):", err);
+  }
+}
+
 // Load db from file if exists
 function loadDb() {
   try {
@@ -340,23 +411,64 @@ function saveDb() {
 
 // Initial DB load
 loadDb();
+syncFromSupabase();
 
 // API Endpoints
 
 // 1. Auth Endpoint
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: "Email is required" });
   }
-  const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (user) {
-    return res.json({ user });
-  } else {
-    // Auto-create user for testing
+
+  try {
+    const lowerEmail = email.toLowerCase();
+    // Try to find in Supabase first
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("email", lowerEmail)
+      .maybeSingle();
+
+    if (user) {
+      // Sync local cache
+      const localIdx = db.users.findIndex(u => u.email.toLowerCase() === lowerEmail);
+      if (localIdx === -1) {
+        db.users.push(user);
+        saveDb();
+      }
+      return res.json({ user });
+    }
+
+    // Auto-create user
     const newUser = {
       id: "user-" + Date.now(),
-      email,
+      email: lowerEmail,
+      role: lowerEmail.includes("admin") || lowerEmail === "den.mazzee@gmail.com" ? "admin" : "editor",
+      created_at: new Date().toISOString()
+    };
+
+    const { data: insertedUser, error: insertError } = await supabase
+      .from("users")
+      .insert(newUser)
+      .select()
+      .single();
+
+    const userToReturn = insertedUser || newUser;
+    db.users.push(userToReturn);
+    saveDb();
+    return res.json({ user: userToReturn });
+  } catch (err) {
+    console.error("Auth login Supabase error, falling back to local:", err);
+    // Fallback to local
+    const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (user) {
+      return res.json({ user });
+    }
+    const newUser = {
+      id: "user-" + Date.now(),
+      email: email.toLowerCase(),
       role: email.includes("admin") || email === "den.mazzee@gmail.com" ? ("admin" as const) : ("editor" as const),
       created_at: new Date().toISOString()
     };
@@ -367,13 +479,39 @@ app.post("/api/auth/login", (req, res) => {
 });
 
 // 2. Themes
-app.get("/api/themes", (req, res) => {
+app.get("/api/themes", async (req, res) => {
+  try {
+    const { data: themes, error } = await supabase.from("themes").select("*");
+    if (error) throw error;
+    if (themes && themes.length > 0) {
+      db.themes = themes;
+      saveDb();
+      return res.json(themes);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch themes failed, using local cache:", err);
+  }
   res.json(db.themes);
 });
 
 // 3. Verses
-app.get("/api/verses", (req, res) => {
+app.get("/api/verses", async (req, res) => {
   const { search } = req.query;
+  try {
+    let query = supabase.from("verses").select("*");
+    if (search) {
+      const q = `%${search}%`;
+      query = query.or(`book.ilike.${q},text.ilike.${q},theme.ilike.${q}`);
+    }
+    const { data: verses, error } = await query;
+    if (error) throw error;
+    if (verses) {
+      return res.json(verses);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch verses failed, using local cache:", err);
+  }
+
   if (search) {
     const query = String(search).toLowerCase();
     const filtered = db.verses.filter(
@@ -387,7 +525,7 @@ app.get("/api/verses", (req, res) => {
   res.json(db.verses);
 });
 
-app.post("/api/verses", (req, res) => {
+app.post("/api/verses", async (req, res) => {
   const { book, chapter, verse, text, translation, theme } = req.body;
   const newVerse = {
     id: "verse-" + Date.now(),
@@ -398,47 +536,125 @@ app.post("/api/verses", (req, res) => {
     translation: translation || "TB",
     theme
   };
+
+  try {
+    await supabase.from("verses").insert(newVerse);
+  } catch (err) {
+    console.error("Supabase insert verse failed:", err);
+  }
+
   db.verses.push(newVerse);
   saveDb();
   res.json(newVerse);
 });
 
 // Bookmarks
-app.get("/api/bookmarks", (req, res) => {
+app.get("/api/bookmarks", async (req, res) => {
+  try {
+    const { data: bookmarks, error } = await supabase.from("bookmarks").select("*");
+    if (error) throw error;
+    if (bookmarks) {
+      const mapped = bookmarks.map((b: any) => ({
+        id: b.id,
+        verseId: b.verse_id,
+        bookmarkedAt: b.bookmarked_at,
+        verse: db.verses.find(v => v.id === b.verse_id)
+      }));
+      db.bookmarks = mapped;
+      saveDb();
+      return res.json(mapped);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch bookmarks failed, using local cache:", err);
+  }
   res.json(db.bookmarks || []);
 });
 
-app.post("/api/bookmarks", (req, res) => {
+app.post("/api/bookmarks", async (req, res) => {
   const { verseId } = req.body;
   const verse = db.verses.find(v => v.id === verseId);
   if (!verse) {
     return res.status(404).json({ error: "Verse not found" });
   }
-  const existingIndex = db.bookmarks.findIndex(b => b.verseId === verseId);
-  if (existingIndex > -1) {
-    db.bookmarks.splice(existingIndex, 1);
+
+  try {
+    const { data: existing } = await supabase
+      .from("bookmarks")
+      .select("*")
+      .eq("verse_id", verseId);
+
+    if (existing && existing.length > 0) {
+      await supabase.from("bookmarks").delete().eq("verse_id", verseId);
+      
+      db.bookmarks = db.bookmarks.filter(b => b.verseId !== verseId);
+      saveDb();
+      return res.json({ bookmarked: false, bookmarks: db.bookmarks });
+    } else {
+      const newBookmark = {
+        id: "bm-" + Date.now(),
+        verse_id: verseId,
+        bookmarked_at: new Date().toISOString()
+      };
+      await supabase.from("bookmarks").insert(newBookmark);
+
+      const localBookmark = {
+        id: newBookmark.id,
+        verseId,
+        verse,
+        bookmarkedAt: newBookmark.bookmarked_at
+      };
+      db.bookmarks.push(localBookmark);
+      saveDb();
+      return res.json({ bookmarked: true, bookmarks: db.bookmarks });
+    }
+  } catch (err) {
+    console.error("Supabase toggle bookmark failed, using local:", err);
+    // Local fallback
+    const existingIndex = db.bookmarks.findIndex(b => b.verseId === verseId);
+    if (existingIndex > -1) {
+      db.bookmarks.splice(existingIndex, 1);
+      saveDb();
+      return res.json({ bookmarked: false, bookmarks: db.bookmarks });
+    }
+    const newBookmark = {
+      id: "bm-" + Date.now(),
+      verseId,
+      verse,
+      bookmarkedAt: new Date().toISOString()
+    };
+    db.bookmarks.push(newBookmark);
     saveDb();
-    return res.json({ bookmarked: false, bookmarks: db.bookmarks });
+    res.json({ bookmarked: true, bookmarks: db.bookmarks });
   }
-  const newBookmark = {
-    id: "bm-" + Date.now(),
-    verseId,
-    verse,
-    bookmarkedAt: new Date().toISOString()
-  };
-  db.bookmarks.push(newBookmark);
-  saveDb();
-  res.json({ bookmarked: true, bookmarks: db.bookmarks });
 });
 
 // 4. Devotions
-app.get("/api/devotions", (req, res) => {
+app.get("/api/devotions", async (req, res) => {
   const { audience, theme, status } = req.query;
+  try {
+    let query = supabase.from("devotions").select("*");
+    if (audience) query = query.eq("audience", audience);
+    if (theme) query = query.eq("theme", theme);
+    if (status) query = query.eq("status", status);
+
+    const { data: devotions, error } = await query;
+    if (error) throw error;
+    if (devotions) {
+      const mappedDevotions = devotions.map((d: any) => ({
+        ...d,
+        verse: db.verses.find(v => v.id === d.verse_id)
+      }));
+      return res.json(mappedDevotions);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch devotions failed, using local cache:", err);
+  }
+
+  // Fallback
   let devotionsList = db.devotions.map(d => ({
     ...d,
     verse: db.verses.find(v => v.id === d.verse_id)
   }));
-
   if (audience) {
     devotionsList = devotionsList.filter(d => d.audience === audience);
   }
@@ -448,12 +664,28 @@ app.get("/api/devotions", (req, res) => {
   if (status) {
     devotionsList = devotionsList.filter(d => d.status === status);
   }
-
   res.json(devotionsList);
 });
 
-app.get("/api/devotions/:idOrSlug", (req, res) => {
+app.get("/api/devotions/:idOrSlug", async (req, res) => {
   const param = req.params.idOrSlug;
+  try {
+    const { data: dev, error } = await supabase
+      .from("devotions")
+      .select("*")
+      .or(`id.eq.${param},slug.eq.${param}`)
+      .maybeSingle();
+
+    if (dev) {
+      return res.json({
+        ...dev,
+        verse: db.verses.find(v => v.id === dev.verse_id)
+      });
+    }
+  } catch (err) {
+    console.warn("Supabase devotion lookup failed, using local cache:", err);
+  }
+
   const dev = db.devotions.find(d => d.id === param || d.slug === param);
   if (!dev) {
     return res.status(404).json({ error: "Renungan tidak ditemukan" });
@@ -464,7 +696,7 @@ app.get("/api/devotions/:idOrSlug", (req, res) => {
   });
 });
 
-app.post("/api/devotions", (req, res) => {
+app.post("/api/devotions", async (req, res) => {
   const {
     title,
     verse_id,
@@ -509,12 +741,21 @@ app.post("/api/devotions", (req, res) => {
     tags: tags || [theme]
   };
 
-  db.devotions.push(newDevotion);
+  try {
+    await supabase.from("devotions").insert(newDevotion);
+  } catch (err) {
+    console.error("Supabase insert devotion failed:", err);
+  }
+
+  db.devotions.push(newDevotion as any);
   saveDb();
-  res.json(newDevotion);
+  res.json({
+    ...newDevotion,
+    verse: db.verses.find(v => v.id === newDevotion.verse_id)
+  });
 });
 
-app.put("/api/devotions/:id", (req, res) => {
+app.put("/api/devotions/:id", async (req, res) => {
   const { id } = req.params;
   const idx = db.devotions.findIndex(d => d.id === id);
   if (idx === -1) {
@@ -524,7 +765,6 @@ app.put("/api/devotions/:id", (req, res) => {
   const updatedDevotion = {
     ...db.devotions[idx],
     ...req.body,
-    // ensure slug is updated if title is modified
     slug: req.body.title
       ? req.body.title
           .toLowerCase()
@@ -533,26 +773,68 @@ app.put("/api/devotions/:id", (req, res) => {
       : db.devotions[idx].slug
   };
 
+  try {
+    const { error } = await supabase
+      .from("devotions")
+      .update({
+        title: updatedDevotion.title,
+        slug: updatedDevotion.slug,
+        verse_id: updatedDevotion.verse_id,
+        audience: updatedDevotion.audience,
+        theme: updatedDevotion.theme,
+        content: updatedDevotion.content,
+        prayer: updatedDevotion.prayer,
+        reflection: updatedDevotion.reflection,
+        challenge: updatedDevotion.challenge,
+        image: updatedDevotion.image,
+        status: updatedDevotion.status,
+        publish_date: updatedDevotion.publish_date,
+        seo_title: updatedDevotion.seo_title,
+        meta_description: updatedDevotion.meta_description,
+        tags: updatedDevotion.tags
+      })
+      .eq("id", id);
+    if (error) throw error;
+  } catch (err) {
+    console.error("Supabase update devotion failed:", err);
+  }
+
   db.devotions[idx] = updatedDevotion;
   saveDb();
   res.json(updatedDevotion);
 });
 
-app.delete("/api/devotions/:id", (req, res) => {
+app.delete("/api/devotions/:id", async (req, res) => {
   const { id } = req.params;
-  const idx = db.devotions.findIndex(d => d.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: "Renungan tidak ditemukan" });
+  try {
+    await supabase.from("devotions").delete().eq("id", id);
+  } catch (err) {
+    console.error("Supabase delete devotion failed:", err);
   }
-  db.devotions.splice(idx, 1);
-  saveDb();
+
+  const idx = db.devotions.findIndex(d => d.id === id);
+  if (idx > -1) {
+    db.devotions.splice(idx, 1);
+    saveDb();
+  }
   res.json({ success: true });
 });
 
 // 5. Donations progress & record
-app.get("/api/donations/stats", (req, res) => {
+app.get("/api/donations/stats", async (req, res) => {
+  try {
+    const { data: donations, error } = await supabase.from("donations").select("*");
+    if (error) throw error;
+    if (donations) {
+      db.donations = donations;
+      saveDb();
+    }
+  } catch (err) {
+    console.warn("Supabase fetch donations failed, using local cache:", err);
+  }
+
   const successDonations = db.donations.filter(d => d.status === "success");
-  const totalAmount = successDonations.reduce((sum, d) => sum + d.jumlah, 0);
+  const totalAmount = successDonations.reduce((sum, d) => sum + Number(d.jumlah), 0);
   
   // Progress values
   const targetCount = 1000;
@@ -569,7 +851,7 @@ app.get("/api/donations/stats", (req, res) => {
   });
 });
 
-app.post("/api/donations", (req, res) => {
+app.post("/api/donations", async (req, res) => {
   const { nama, email, jumlah, pesan } = req.body;
   const newDonation = {
     id: "don-" + Date.now(),
@@ -580,17 +862,35 @@ app.post("/api/donations", (req, res) => {
     status: "success" as const, // In dev mode, let's mark it as success instantly!
     created_at: new Date().toISOString()
   };
+
+  try {
+    await supabase.from("donations").insert(newDonation);
+  } catch (err) {
+    console.error("Supabase insert donation failed:", err);
+  }
+
   db.donations.push(newDonation);
   saveDb();
   res.json(newDonation);
 });
 
 // 6. Merchandise Catalog & checkout
-app.get("/api/merchandise", (req, res) => {
+app.get("/api/merchandise", async (req, res) => {
+  try {
+    const { data: merch, error } = await supabase.from("merchandise").select("*");
+    if (error) throw error;
+    if (merch) {
+      db.merchandise = merch;
+      saveDb();
+      return res.json(merch);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch merchandise failed, using local cache:", err);
+  }
   res.json(db.merchandise);
 });
 
-app.post("/api/merchandise/checkout", (req, res) => {
+app.post("/api/merchandise/checkout", async (req, res) => {
   const { items } = req.body; // array of { id, quantity }
   if (!items || !Array.isArray(items)) {
     return res.status(400).json({ error: "Items array is required" });
@@ -614,6 +914,15 @@ app.post("/api/merchandise/checkout", (req, res) => {
       harga: storeItem.harga,
       quantity: checkoutItem.quantity
     });
+
+    try {
+      await supabase
+        .from("merchandise")
+        .update({ stok: storeItem.stok })
+        .eq("id", storeItem.id);
+    } catch (err) {
+      console.error(`Supabase update merchandise stock failed for ${storeItem.id}:`, err);
+    }
   }
 
   saveDb();
@@ -626,17 +935,38 @@ app.post("/api/merchandise/checkout", (req, res) => {
 });
 
 // 7. Reading Plan Completion Toggle
-app.get("/api/reading-plan", (req, res) => {
+app.get("/api/reading-plan", async (req, res) => {
+  try {
+    const { data: plans, error } = await supabase.from("reading_plans").select("*");
+    if (error) throw error;
+    if (plans) {
+      db.readingPlan = plans.sort((a, b) => a.day - b.day);
+      saveDb();
+      return res.json(db.readingPlan);
+    }
+  } catch (err) {
+    console.warn("Supabase fetch reading plan failed, using local cache:", err);
+  }
   res.json(db.readingPlan);
 });
 
-app.post("/api/reading-plan/toggle", (req, res) => {
+app.post("/api/reading-plan/toggle", async (req, res) => {
   const { day } = req.body;
   const planDay = db.readingPlan.find(p => p.day === Number(day));
   if (!planDay) {
     return res.status(404).json({ error: "Hari membaca tidak ditemukan" });
   }
   planDay.completed = !planDay.completed;
+
+  try {
+    await supabase
+      .from("reading_plans")
+      .update({ completed: planDay.completed })
+      .eq("day", Number(day));
+  } catch (err) {
+    console.error("Supabase update reading plan failed:", err);
+  }
+
   saveDb();
   res.json(planDay);
 });
@@ -733,6 +1063,13 @@ Hasilkan output hanya dalam format JSON yang valid dengan skema berikut:
         translation: "TB",
         theme
       };
+      
+      try {
+        await supabase.from("verses").insert(existingVerse);
+      } catch (err) {
+        console.error("Supabase insert verse failed in AI generate:", err);
+      }
+
       db.verses.push(existingVerse);
       saveDb();
     }
@@ -837,6 +1174,13 @@ Format output harus berupa JSON Array dengan objek-objek renungan harian dengan 
           translation: "TB",
           theme
         };
+        
+        try {
+          await supabase.from("verses").insert(existingVerse);
+        } catch (err) {
+          console.error("Supabase insert verse failed in AI bulk-generate:", err);
+        }
+
         db.verses.push(existingVerse);
       }
 
@@ -864,6 +1208,12 @@ Format output harus berupa JSON Array dengan objek-objek renungan harian dengan 
         meta_description: item.metaDescription,
         tags: item.tags
       };
+
+      try {
+        await supabase.from("devotions").insert(newDev);
+      } catch (err) {
+        console.error("Supabase insert devotion failed in AI bulk-generate:", err);
+      }
 
       db.devotions.push(newDev as any);
       createdDevotions.push({
