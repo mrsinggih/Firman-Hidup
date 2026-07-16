@@ -1,0 +1,6 @@
+{
+  "name": "Firman Hidup",
+  "description": "Platform Pelayanan Digital Renungan Kristen Harian dengan AI Generator",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
