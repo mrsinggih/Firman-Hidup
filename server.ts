@@ -13,8 +13,6 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
@@ -1224,11 +1222,11 @@ Format output harus berupa JSON Array dengan objek-objek renungan harian dengan 
 });
 
 // Import Vite dynamically as a dev middleware if in dev environment, or serve statics if production
-import { createServer as createViteServer } from "vite";
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     console.log("Starting server in DEVELOPMENT mode with Vite Middleware.");
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
